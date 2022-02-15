@@ -1,0 +1,56 @@
+name: Force Merge It!
+on:
+  issue_comment:
+    types: [created]
+jobs:
+  rebase:
+    name: Rebase
+    if: github.event.issue.pull_request != '' && contains(github.event.comment.body, '/force_merge')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the latest code
+        uses: actions/checkout@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0 # otherwise, you will fail to push refs to dest repo
+      - id: set_var
+        run: |
+          content=$(gh pr view $PR_NUMBER --json headRefName,baseRefName,isDraft,mergeable,closed,author)
+          # the following lines are only required for multi line json
+          content="${content//'%'/'%25'}"
+          content="${content//$'\n'/'%0A'}"
+          content="${content//$'\r'/'%0D'}"
+          # end of optional handling for multi line json
+          echo "::set-output name=packageJson::$content"
+        env:
+          PR_NUMBER: ${{github.event.issue.number}}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run merge script
+        run: |
+           tee ./privateKey <<<"$SSH_KEY"
+           chmod -R 600 ./privateKey
+           echo $SSH_KEY
+           git config --global user.email "app.team@pinkoi.com"
+           git config --global user.name "Rick C-137"
+           git merge origin/${{fromJson(steps.set_var.outputs.packageJson).headRefName}}
+           ssh-agent bash -c 'ssh-add ./privateKey; git push'
+        shell: bash
+        env:
+          SSH_KEY: ${{secrets.SSH_PRIVATE_KEY}}
+      
+      - name: successNotify
+        if: success()
+        uses: peter-evans/create-or-update-comment@v1
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            [Force Merge Workflow 執行成功](https://github.com/pinkoi-inc/iOS/actions/runs/${{github.run_id}})
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: failureNotify
+        if: failure()
+        uses: peter-evans/create-or-update-comment@v1
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            [Force Merge Workflow 執行失敗](https://github.com/pinkoi-inc/iOS/actions/runs/${{github.run_id}})
+          token: ${{ secrets.GITHUB_TOKEN }}
